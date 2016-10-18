@@ -35,6 +35,31 @@ pub trait TaskedFuture {
 }
 
 
+struct FnWrapper<F, T, R, E> where F: FnMut(&mut T) -> Poll<R, E> {
+    func: F,
+    _phantom_data: PhantomData<(T, R, E)>,
+}
+
+impl<F, T, R, E> FnWrapper<F, T, R, E> where F: FnMut(&mut T) -> Poll<R, E> {
+    pub fn new(f: F) -> FnWrapper<F, T, R, E> {
+        FnWrapper {
+            func: f,
+            _phantom_data: PhantomData,
+        }
+    }
+}
+
+impl<F, T, R, E> TaskedFuture for FnWrapper<F, T, R, E> where F: FnMut(&mut T) -> Poll<R, E> {
+    type Item = R;
+    type Error = E;
+    type Task = T;
+
+    fn poll(&mut self, task: &mut Self::Task) -> Poll<Self::Item, Self::Error> {
+        (self.func)(task)
+    }
+}
+
+
 pub trait IntoTaskedFuture {
     /// The future that this type can be converted into.
     type TaskedFuture: TaskedFuture<Item=Self::Item, Error=Self::Error, Task=Self::Task>;
@@ -118,13 +143,17 @@ impl<T, E> Default for TaskExecutorQueue<T, E> {
     }
 }
 
-pub trait TaskExecutor: Sized {
+pub trait TaskExecutor: Sized + 'static {
     type Error;
 
     fn task_executor_mut(&mut self) -> &mut TaskExecutorQueue<Self, Self::Error>;
 
-    fn spawn<F>(&mut self, future: F) where F: TaskedFuture<Item=(), Error=Self::Error, Task=Self> + 'static {
-        self.task_executor_mut().queue.push(Box::new(future))
+    fn spawn<F>(&mut self, future: F) where F: IntoTaskedFuture<Item=(), Error=Self::Error, Task=Self> + 'static {
+        self.task_executor_mut().queue.push(Box::new(future.into_tasked_future()))
+    }
+
+    fn spawn_fn<F>(&mut self, func: F) where F: FnMut(&mut Self) -> Poll<(), Self::Error> + 'static {
+        self.task_executor_mut().queue.push(Box::new(FnWrapper::new(func)))
     }
 
     fn poll(&mut self) -> Poll<(), Self::Error> {
@@ -298,5 +327,20 @@ mod tests {
         assert_eq!(data.get(), 0u8);
         while let Async::NotReady = task.poll_future(Arc::new(DummyUnpark)).unwrap() {}
         assert_eq!(data.get(), 2u8);
+    }
+
+    #[test]
+    fn fnmut() {
+        let mut task = TestTask::default();
+        task.spawn_fn(|task| {
+            task.data.set(task.data.get() + 1);
+            Ok(Async::NotReady)
+        });
+
+        let data = task.data.clone();
+        assert_eq!(Ok(Async::NotReady), task.poll());
+        assert_eq!(data.get(), 1);
+        assert_eq!(Ok(Async::NotReady), task.poll());
+        assert_eq!(data.get(), 2);
     }
 }

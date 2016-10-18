@@ -97,9 +97,25 @@ impl<F, I, E, T> TaskedFuture for TaskedFutureAdaptor<F, T> where F: Future<Item
 
 type BoxedExecutorFuture<T, E> = Box<TaskedFuture<Item=(), Error=E, Task=T>>;
 
-#[derive(Default)]
+
 pub struct TaskExecutorQueue<T, E> {
     queue: Vec<BoxedExecutorFuture<T, E>>,
+}
+
+impl<T, E> TaskExecutorQueue<T, E> {
+    pub fn new() -> TaskExecutorQueue<T, E> {
+        TaskExecutorQueue {
+            queue: Vec::new(),
+        }
+    }
+}
+
+impl<T, E> Default for TaskExecutorQueue<T, E> {
+    fn default() -> TaskExecutorQueue<T, E> {
+        TaskExecutorQueue {
+            queue: Vec::new(),
+        }
+    }
 }
 
 pub trait TaskExecutor: Sized {

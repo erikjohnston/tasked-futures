@@ -1,0 +1,7 @@
+[package]
+authors = ["Erik Johnston <erikj@matrix.org>"]
+name = "tasked-futures"
+version = "0.1.0"
+
+[dependencies]
+futures = "0.1.2"

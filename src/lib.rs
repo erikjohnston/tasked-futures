@@ -125,21 +125,30 @@ type BoxedExecutorFuture<T, E> = Box<TaskedFuture<Item=(), Error=E, Task=T>>;
 
 pub struct TaskExecutorQueue<T, E> {
     queue: Vec<BoxedExecutorFuture<T, E>>,
+    stopped: bool,
 }
 
 impl<T, E> TaskExecutorQueue<T, E> {
     pub fn new() -> TaskExecutorQueue<T, E> {
         TaskExecutorQueue {
             queue: Vec::new(),
+            stopped: false,
         }
+    }
+
+    pub fn stop(&mut self) {
+        self.queue.clear();
+        self.stopped = true;
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.stopped
     }
 }
 
 impl<T, E> Default for TaskExecutorQueue<T, E> {
     fn default() -> TaskExecutorQueue<T, E> {
-        TaskExecutorQueue {
-            queue: Vec::new(),
-        }
+        TaskExecutorQueue::new()
     }
 }
 
@@ -148,15 +157,27 @@ pub trait TaskExecutor: Sized + 'static {
 
     fn task_executor_mut(&mut self) -> &mut TaskExecutorQueue<Self, Self::Error>;
 
+    fn stop(&mut self) {
+        self.task_executor_mut().stop();
+    }
+
     fn spawn<F>(&mut self, future: F) where F: IntoTaskedFuture<Item=(), Error=Self::Error, Task=Self> + 'static {
-        self.task_executor_mut().queue.push(Box::new(future.into_tasked_future()))
+        if !self.task_executor_mut().is_stopped() {
+            self.task_executor_mut().queue.push(Box::new(future.into_tasked_future()));
+        }
     }
 
     fn spawn_fn<F>(&mut self, func: F) where F: FnMut(&mut Self) -> Poll<(), Self::Error> + 'static {
-        self.task_executor_mut().queue.push(Box::new(FnWrapper::new(func)))
+        if !self.task_executor_mut().is_stopped() {
+            self.task_executor_mut().queue.push(Box::new(FnWrapper::new(func)));
+        }
     }
 
     fn poll(&mut self) -> Poll<(), Self::Error> {
+        if self.task_executor_mut().is_stopped() {
+            return Ok(Async::Ready(()));
+        }
+
         let len = self.task_executor_mut().queue.len();
         let queue = mem::replace(&mut self.task_executor_mut().queue, Vec::with_capacity(len));
 

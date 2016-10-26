@@ -174,21 +174,29 @@ pub trait TaskExecutor: Sized + 'static {
     }
 
     fn poll(&mut self) -> Poll<(), Self::Error> {
-        if self.task_executor_mut().is_stopped() {
-            return Ok(Async::Ready(()));
-        }
+        loop {
+            if self.task_executor_mut().is_stopped() {
+                return Ok(Async::Ready(()));
+            }
 
-        let len = self.task_executor_mut().queue.len();
-        let queue = mem::replace(&mut self.task_executor_mut().queue, Vec::with_capacity(len));
+            let len = self.task_executor_mut().queue.len();
+            let queue = mem::replace(&mut self.task_executor_mut().queue, Vec::with_capacity(len));
 
-        let mut to_append = Vec::with_capacity(len);
-        for mut future in queue {
-            if let Async::NotReady = try!(future.poll(self)) {
-                to_append.push(future);
+            let mut to_append = Vec::with_capacity(len);
+            for mut future in queue {
+                if let Async::NotReady = try!(future.poll(self)) {
+                    to_append.push(future);
+                }
+            }
+
+            let new_futures = !self.task_executor_mut().queue.is_empty();
+
+            self.task_executor_mut().queue.append(&mut to_append);
+
+            if !new_futures {
+                break;
             }
         }
-
-        self.task_executor_mut().queue.append(&mut to_append);
 
         if self.task_executor_mut().queue.is_empty() {
             Ok(Async::Ready(()))
